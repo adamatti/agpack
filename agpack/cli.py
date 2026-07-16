@@ -20,13 +20,13 @@ from rich.table import Table
 
 from agpack import __version__
 from agpack.config import AgpackConfig
-from agpack.config import DependencySource
 from agpack.config import GlobalConfig
 from agpack.config import load_config
 from agpack.config import load_global_config
 from agpack.config import merge_configs
 from agpack.config import resolve_config
 from agpack.config import resolve_global_config_path
+from agpack.dependency_source import DependencySource
 from agpack.deployer import cleanup_deployed_files
 from agpack.deployer import cleanup_orphaned_edits
 from agpack.deployer import deploy_item
@@ -91,6 +91,7 @@ def _sync_resource_type(  # noqa: C901  # orchestrator: fetch + deploy + lockfil
     new_lockfile: Lockfile,
     progress: Progress,
     env_vars: dict[str, str],
+    resolved_fetch_targets: dict[str, list[TargetDef]],
     *,
     verbose: bool,
 ) -> SyncResult:
@@ -99,6 +100,9 @@ def _sync_resource_type(  # noqa: C901  # orchestrator: fetch + deploy + lockfil
     The resource type's kind (``copy-directory`` / ``copy-file``) is looked up from any target that declares it — all
     targets sharing the resource type share the kind (validated by :func:`_resource_kinds`). On error, writes a partial
     lockfile (with what has been synced so far) before raising ClickException.
+
+    *resolved_fetch_targets* is the ``target:`` scope already resolved per-dependency by
+    :func:`_validate_target_scopes`, keyed by :attr:`DependencySource.identity`.
     """
     if not deps:
         return SyncResult()
@@ -146,6 +150,7 @@ def _sync_resource_type(  # noqa: C901  # orchestrator: fetch + deploy + lockfil
     sync = SyncResult()
     for dep, result in results:
         tid = task_ids[dep.identity]
+        dep_targets = resolved_fetch_targets[dep.identity]
 
         try:
             items = detect_items(result, detect_resource, resource_type)
@@ -180,7 +185,7 @@ def _sync_resource_type(  # noqa: C901  # orchestrator: fetch + deploy + lockfil
                     item_name,
                     item_path,
                     resource_type,
-                    target_defs,
+                    dep_targets,
                     project_root,
                 )
             except Exception as exc:
@@ -360,6 +365,50 @@ def _resolve_targets(config: AgpackConfig) -> list[TargetDef]:
     return resolved
 
 
+def _validate_target_scopes(config: AgpackConfig, target_defs: list[TargetDef]) -> dict[str, list[TargetDef]]:
+    """Fail fast on a typo'd ``target:`` scope, before ``sync``/``status`` do anything else.
+
+    Returns the resolved target list for each fetch (copy-kind) entry, keyed by
+    :attr:`DependencySource.identity`, so :func:`_sync_resource_type` can reuse it instead of re-resolving —
+    this is the only place ``target:`` scopes get resolved, so there's nowhere for the two to drift apart.
+    """
+    resolved_fetch_targets: dict[str, list[TargetDef]] = {}
+    for resource_type, dep_entries in config.dependencies.items():
+        for dep_entry in dep_entries:
+            label = dep_entry.name if isinstance(dep_entry, DependencySource) else dep_entry.key
+            resolved = _resolve_entry_targets(dep_entry.targets, target_defs, f"{resource_type} '{label}'")
+            if isinstance(dep_entry, DependencySource):
+                resolved_fetch_targets[dep_entry.identity] = resolved
+    return resolved_fetch_targets
+
+
+def _resolve_entry_targets(
+    entry_targets: tuple[str, ...] | None,
+    target_defs: list[TargetDef],
+    dep_label: str,
+) -> list[TargetDef]:
+    """Resolve one dependency entry's ``target:`` scope to real :class:`TargetDef` objects, once.
+
+    ``None`` (no ``target:`` given) returns *target_defs* unchanged — every configured target, same as before this
+    scoping existed. Everything downstream (``deploy_item``, the edit-file diff) just gets a plain target list and
+    never has to know whether it's the full set or a dependency's own subset.
+
+    Raises:
+        click.ClickException: If a listed name isn't among the configured targets — same treatment as an unknown
+            name in the top-level ``targets:`` list, so a typo in ``target:`` fails loudly instead of silently
+            deploying nowhere.
+    """
+    if entry_targets is None:
+        return target_defs
+    by_name = {t.name: t for t in target_defs}
+    unknown = [n for n in entry_targets if n not in by_name]
+    if unknown:
+        configured = ", ".join(sorted(by_name)) or "(none)"
+        msg = f"{dep_label}: target: {sorted(unknown)} not in the configured 'targets:' list ({configured})."
+        raise click.ClickException(msg)
+    return [by_name[n] for n in entry_targets]
+
+
 def _load_and_merge_global(
     config: AgpackConfig,
     *,
@@ -431,6 +480,7 @@ def sync(config_path: str, verbose: bool, no_global: bool) -> None:  # noqa: C90
     # 4. Resolve target names to manifests + build the kind map
     target_defs = _resolve_targets(config)
     resource_kinds = _resource_kinds(target_defs)
+    resolved_fetch_targets = _validate_target_scopes(config, target_defs)
 
     # 5. Read existing lockfile and build the set of current fetch-dependency identities (copy kinds only — patches
     # are tracked separately under lockfile.edits).
@@ -502,6 +552,7 @@ def sync(config_path: str, verbose: bool, no_global: bool) -> None:  # noqa: C90
                 new_lockfile,
                 progress,
                 env_vars,
+                resolved_fetch_targets,
                 verbose=verbose,
             )
             counts[resource_type] = sync.count
@@ -560,6 +611,7 @@ def status(config_path: str, no_global: bool) -> None:  # noqa: C901
         config, global_cfg = _load_and_merge_global(config)
 
     target_defs = _resolve_targets(config)
+    _validate_target_scopes(config, target_defs)
     env_vars = build_env(project_root, global_cfg.config_dir if global_cfg else None)
 
     lockfile = read_lockfile(project_root)
@@ -646,10 +698,11 @@ def _is_patch_synced(
     edits_by_type: dict[str, EditLockEntry],
     env_vars: dict[str, str],
 ) -> bool:
-    """True iff every target that owns this resource type has the patch recorded in the lockfile.
+    """True iff every owning target *in scope for this patch* has it recorded in the lockfile.
 
     The dep is resolved per-owner-target via :meth:`EditFileResource.patch_identity` so any target-specific value
-    substitution participates in the identity hash.
+    substitution participates in the identity hash. ``dep.targets`` (if set) narrows "owning target" down to the
+    names it lists — mirrors the scoping :func:`agpack.deployer.sync_edit_resource` applies at sync time.
     """
     recorded = edits_by_type.get(resource_type)
     if recorded is None:
@@ -657,7 +710,12 @@ def _is_patch_synced(
     applied_by_id: dict[tuple[str, tuple[Any, ...]], AppliedPatch] = {
         (ap.file_path, match_key(ap.strategy, ap.key, ap.value_hash)): ap for ap in recorded.applied
     }
-    owners = [t for t in target_defs if isinstance(t.resources.get(resource_type), EditFileResource)]
+    owners = [
+        t
+        for t in target_defs
+        if isinstance(t.resources.get(resource_type), EditFileResource)
+        and (dep.targets is None or t.name in dep.targets)
+    ]
     if not owners:
         return False
     for target in owners:

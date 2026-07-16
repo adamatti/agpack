@@ -11,9 +11,12 @@ import click
 import pytest
 
 from agpack.cli import _MAX_FETCH_WORKERS
+from agpack.cli import _resolve_entry_targets
 from agpack.cli import _resource_kinds
 from agpack.cli import _sync_resource_type
-from agpack.config import DependencySource
+from agpack.cli import _validate_target_scopes
+from agpack.config import AgpackConfig
+from agpack.dependency_source import DependencySource
 from agpack.display import create_sync_progress
 from agpack.fetcher import FetchError
 from agpack.fetcher import FetchResult
@@ -34,6 +37,11 @@ def _make_result(dep: DependencySource, tmp_path: Path) -> FetchResult:
 
 def _make_targets(names: list[str] | None = None) -> list[TargetDef]:
     return [load_builtin(n) for n in (names or ["claude"])]
+
+
+def _full_scope(deps: list[DependencySource], target_defs: list[TargetDef]) -> dict[str, list[TargetDef]]:
+    """The resolved-target map ``_validate_target_scopes`` would produce for deps with no ``target:`` scoping."""
+    return dict.fromkeys((dep.identity for dep in deps), target_defs)
 
 
 def _fake_detect_items(result: FetchResult, _resource: object, _resource_type: str) -> list[tuple[str, Path]]:
@@ -79,6 +87,7 @@ class TestParallelFetchAllSucceed:
                 new_lockfile,
                 progress,
                 {},
+                _full_scope(deps, target_defs),
                 verbose=False,
             )
 
@@ -107,6 +116,7 @@ class TestParallelFetchAllSucceed:
                 new_lockfile,
                 progress,
                 {},
+                _full_scope(deps, target_defs),
                 verbose=False,
             )
 
@@ -143,6 +153,7 @@ class TestParallelFetchCollectAllErrors:
                 new_lockfile,
                 progress,
                 {},
+                _full_scope(deps, target_defs),
                 verbose=False,
             )
 
@@ -183,6 +194,7 @@ class TestParallelFetchCollectAllErrors:
                 Lockfile(),
                 progress,
                 {},
+                _full_scope(deps, target_defs),
                 verbose=False,
             )
 
@@ -218,6 +230,7 @@ class TestParallelFetchCollectAllErrors:
                 Lockfile(),
                 progress,
                 {},
+                _full_scope(deps, target_defs),
                 verbose=False,
             )
 
@@ -239,6 +252,7 @@ class TestParallelFetchEdgeCases:
                 Lockfile(),
                 progress,
                 {},
+                _full_scope([], _make_targets()),
                 verbose=False,
             )
         assert sync.count == 0
@@ -275,6 +289,7 @@ class TestParallelFetchEdgeCases:
                 Lockfile(),
                 progress,
                 {},
+                _full_scope(deps, target_defs),
                 verbose=False,
             )
 
@@ -306,10 +321,115 @@ class TestParallelFetchEdgeCases:
                 Lockfile(),
                 progress,
                 {},
+                _full_scope(deps, target_defs),
                 verbose=False,
             )
 
         mock_write.assert_called_once()
+
+
+class TestSyncResourceTypeTargetScope:
+    def test_deploy_item_gets_only_scoped_targets(self, tmp_path: Path) -> None:
+        deps = [_make_dep("a")]
+        deps[0].targets = ("claude",)
+        fake_result = _make_result(deps[0], tmp_path)
+        target_defs = _make_targets(["claude", "opencode"])
+        scoped_targets = [t for t in target_defs if t.name == "claude"]
+        deploy_item_mock = MagicMock(side_effect=_fake_deploy_item)
+
+        with (
+            patch("agpack.cli.fetch_dependency", return_value=fake_result),
+            patch("agpack.cli.cleanup_fetch"),
+            patch("agpack.cli.detect_items", side_effect=_fake_detect_items),
+            patch("agpack.cli.deploy_item", deploy_item_mock),
+            create_sync_progress() as progress,
+        ):
+            _sync_resource_type(
+                deps,
+                "skills",
+                target_defs,
+                tmp_path,
+                Lockfile(),
+                progress,
+                {},
+                {deps[0].identity: scoped_targets},
+                verbose=False,
+            )
+
+        deployed_targets = deploy_item_mock.call_args.args[3]
+        assert [t.name for t in deployed_targets] == ["claude"]
+
+    def test_unscoped_dep_gets_full_target_list(self, tmp_path: Path) -> None:
+        deps = [_make_dep("a")]
+        fake_result = _make_result(deps[0], tmp_path)
+        target_defs = _make_targets(["claude", "opencode"])
+        deploy_item_mock = MagicMock(side_effect=_fake_deploy_item)
+
+        with (
+            patch("agpack.cli.fetch_dependency", return_value=fake_result),
+            patch("agpack.cli.cleanup_fetch"),
+            patch("agpack.cli.detect_items", side_effect=_fake_detect_items),
+            patch("agpack.cli.deploy_item", deploy_item_mock),
+            create_sync_progress() as progress,
+        ):
+            _sync_resource_type(
+                deps,
+                "skills",
+                target_defs,
+                tmp_path,
+                Lockfile(),
+                progress,
+                {},
+                _full_scope(deps, target_defs),
+                verbose=False,
+            )
+
+        deployed_targets = deploy_item_mock.call_args.args[3]
+        assert {t.name for t in deployed_targets} == {"claude", "opencode"}
+
+
+class TestValidateTargetScopes:
+    """``_validate_target_scopes`` is the single place ``target:`` scopes get resolved — for both ``sync`` and
+    ``status``, and now for ``_sync_resource_type`` too (it reuses the returned map instead of re-resolving), so an
+    unknown target name must fail here, before any fetch/deploy/lockfile side effect.
+    """
+
+    def test_unknown_target_name_raises(self) -> None:
+        target_defs = _make_targets(["claude"])
+        dep = _make_dep("a")
+        dep.targets = ("not-a-real-target",)
+        config = AgpackConfig(targets=["claude"], dependencies={"skills": [dep]})
+
+        with pytest.raises(click.ClickException, match="not-a-real-target"):
+            _validate_target_scopes(config, target_defs)
+
+    def test_resolved_map_keyed_by_dep_identity(self) -> None:
+        target_defs = _make_targets(["claude", "opencode"])
+        scoped = _make_dep("a")
+        scoped.targets = ("claude",)
+        unscoped = _make_dep("b")
+        config = AgpackConfig(targets=["claude", "opencode"], dependencies={"skills": [scoped, unscoped]})
+
+        resolved = _validate_target_scopes(config, target_defs)
+
+        assert [t.name for t in resolved[scoped.identity]] == ["claude"]
+        assert resolved[unscoped.identity] is target_defs
+
+
+class TestResolveEntryTargets:
+    def test_none_returns_full_list_unchanged(self) -> None:
+        target_defs = _make_targets(["claude", "opencode"])
+        assert _resolve_entry_targets(None, target_defs, "dep") is target_defs
+
+    def test_resolves_names_to_target_defs(self) -> None:
+        target_defs = _make_targets(["claude", "opencode", "cursor"])
+        resolved = _resolve_entry_targets(("opencode", "cursor"), target_defs, "dep")
+        assert [t.name for t in resolved] == ["opencode", "cursor"]
+
+    def test_unknown_name_raises_with_configured_list(self) -> None:
+        target_defs = _make_targets(["claude"])
+        with pytest.raises(click.ClickException, match="bogus"):
+            _resolve_entry_targets(("bogus",), target_defs, "mcp 'context7'")
 
 
 class TestResourceKinds:

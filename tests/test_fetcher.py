@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agpack.config import DependencySource
+from agpack.dependency_source import DependencySource
 from agpack.fetcher import _GIT_TIMEOUT_SECONDS
 from agpack.fetcher import FetchError
 from agpack.fetcher import FetchResult

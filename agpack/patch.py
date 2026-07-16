@@ -28,11 +28,17 @@ class Patch:
         strategy: ``"replace"`` overwrites whatever's at the path;
             ``"append"`` requires the path to resolve to a list (created
             empty if absent) and appends ``value``.
+        targets: If set, this patch only applies to targets whose name is in the list — lets one dependency
+            entry write a genuinely different value for a specific tool (e.g. two ``mcp`` patches at the same
+            ``key``, one scoped to ``[opencode]`` in OpenCode's native shape, one scoped to everything else).
+            ``None`` (the default) means "every target that owns this resource type", matching pre-existing
+            behavior.
     """
 
     key: str
     value: Any
     strategy: Strategy = "replace"
+    targets: tuple[str, ...] | None = None
 
 
 def match_key(strategy: str, key: str, value_hash: str) -> tuple[Any, ...]:

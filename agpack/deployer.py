@@ -49,7 +49,12 @@ def deploy_item(
     targets: list[TargetDef],
     project_root: Path,
 ) -> list[str]:
-    """Deploy one item to every target that supports ``resource_type``."""
+    """Deploy one item to every target that supports ``resource_type``.
+
+    *targets* is whatever the caller has already decided is in scope — the full configured target list, or a
+    dependency's own ``target:`` subset resolved to real :class:`TargetDef` objects by
+    :func:`agpack.cli._resolve_entry_targets`. This function doesn't know or care which.
+    """
     deployed: list[str] = []
     for target in targets:
         resource = target.resources.get(resource_type)
@@ -108,10 +113,12 @@ def sync_edit_resource(
         if resource.path in touched_files:
             continue
         touched_files.add(resource.path)
+        # Scope desired patches to this target: a patch with `targets` set only applies where its name is listed.
+        scoped_desired = [p for p in desired if p.targets is None or target.name in p.targets]
         new_applied.extend(
             resource.sync_patches(
                 applied_old=old_by_file.get(resource.path, []),
-                desired_new=desired,
+                desired_new=scoped_desired,
                 project_root=project_root,
                 env_vars=env_vars,
                 verbose=verbose,

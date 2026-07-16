@@ -286,6 +286,75 @@ def test_status_command(tmp_path: Path) -> None:
     assert "✓" in result.output
 
 
+def test_target_scoped_mcp_patches_write_disjoint_shapes(tmp_path: Path) -> None:
+    """Two ``mcp`` patches at the same key, scoped via ``target:`` to disjoint tools, each land in only their file.
+
+    This is the real-world case a per-target ``target:`` scope exists for: Claude and OpenCode disagree on the native
+    shape of an MCP server entry (``type: stdio`` + separate ``command``/``args`` vs. ``type: local`` + a single
+    ``command`` array), so the same conceptual server needs two differently-shaped entries, each written only to the
+    tool it matches.
+    """
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    config = {
+        "targets": ["claude", "opencode"],
+        "dependencies": {
+            "mcp": [
+                {
+                    "key": "${bucket}.context7",
+                    "value": {"type": "stdio", "command": "npx", "args": ["-y", "ctx7"]},
+                    "target": ["claude"],
+                },
+                {
+                    "key": "${bucket}.context7",
+                    "value": {"type": "local", "command": ["npx", "-y", "ctx7"], "enabled": True},
+                    "target": ["opencode"],
+                },
+            ],
+        },
+    }
+    config_path = project_dir / "agpack.yml"
+    config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+
+    runner = CliRunner()
+    sync_result = runner.invoke(main, ["sync", "--config", str(config_path)], catch_exceptions=False)
+    assert sync_result.exit_code == 0
+
+    claude_mcp = json.loads((project_dir / ".mcp.json").read_text())
+    assert claude_mcp == {"mcpServers": {"context7": {"type": "stdio", "command": "npx", "args": ["-y", "ctx7"]}}}
+
+    opencode_mcp = json.loads((project_dir / "opencode.json").read_text())
+    assert opencode_mcp == {"mcp": {"context7": {"type": "local", "command": ["npx", "-y", "ctx7"], "enabled": True}}}
+
+    status_result = runner.invoke(main, ["status", "--config", str(config_path)], catch_exceptions=False)
+    assert status_result.exit_code == 0
+    assert "not yet synced" not in status_result.output
+
+
+def test_target_scoped_skill_deploys_only_to_named_target(tmp_path: Path) -> None:
+    """A fetch (copy-kind) dependency's ``target:`` scope restricts deployment the same way patches do."""
+    bare_repo = _create_bare_repo(tmp_path)
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    config = {
+        "targets": ["claude", "opencode"],
+        "dependencies": {
+            "skills": [
+                {"url": str(bare_repo), "path": "skills/my-skill", "target": ["claude"]},
+            ],
+        },
+    }
+    config_path = project_dir / "agpack.yml"
+    config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["sync", "--config", str(config_path)], catch_exceptions=False)
+    assert result.exit_code == 0
+
+    assert (project_dir / ".claude/skills/my-skill").exists()
+    assert not (project_dir / ".opencode/skills/my-skill").exists()
+
+
 def test_status_shows_synced_for_var_patches(tmp_path: Path) -> None:
     """Patches whose keys use ${var} must show as synced after a successful sync.
 

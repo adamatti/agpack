@@ -101,6 +101,19 @@ dependencies:
         args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 ```
 
+### Scoping an entry to specific targets
+
+Any entry — fetch or patch — can carry a `target:` list to restrict it to a subset of the configured `targets:`, instead of every target that declares the resource type:
+
+```yaml
+dependencies:
+  skills:
+    - url: https://github.com/owner/claude-only-skill
+      target: [claude]                # only deployed to claude, even if opencode is also configured
+```
+
+Leaving `target:` off (the default) means every target that declares the resource type, exactly like before this existed. An unknown name in `target:` fails `agpack sync`/`agpack status` immediately, same as a typo in the top-level `targets:` list. See [Patches](#patches-edit-file) below for the main reason this exists — one dependency entry, one native value shape per tool.
+
 ### URLs, pinning, and fallbacks
 
 `url` takes any string `git clone` accepts — HTTPS, SSH, local paths. Auth goes through your system git config (SSH keys, credential helpers, etc.).
@@ -166,6 +179,28 @@ dependencies:
     - key: ${bucket}.allow
       strategy: append
       value: "Read(/etc/**)"
+```
+
+### One server, two native shapes
+
+`${bucket}` handles *where* a patch lands (which key each target's manifest uses), but some tools' MCP schemas diverge in *shape*, not just key name — OpenCode, for one, wants a single `command` array, `type: local`, and `enabled: true` where Claude/Cursor/Codex want separate `command`/`args` and `type: stdio`. `target:` lets two patches share a key and each own their tool's native shape:
+
+```yaml
+dependencies:
+  mcp:
+    - key: ${bucket}.context7
+      target: [claude, cursor, codex]
+      value:
+        type: stdio
+        command: npx
+        args: ["-y", "@upstash/context7-mcp@latest"]
+
+    - key: ${bucket}.context7          # same key, disjoint target scope — no collision
+      target: [opencode]
+      value:
+        type: local
+        command: ["npx", "-y", "@upstash/context7-mcp@latest"]
+        enabled: true
 ```
 
 A few things to know:
@@ -317,6 +352,18 @@ dependencies:
         args: ["-y", "@upstash/context7-mcp@latest"]
 ```
 
+If one of those tools needs a genuinely different *value* shape (not just a different bucket key), add a second entry at the same key scoped to just that tool with `target:` — see [One server, two native shapes](#one-server-two-native-shapes).
+
+### Deploy a skill to only one tool
+
+```yaml
+targets: [claude, opencode]
+dependencies:
+  skills:
+    - url: https://github.com/owner/claude-specific-skill
+      target: [claude]                # opencode is configured but never gets this one
+```
+
 ### Private skills with a token from `.env`
 
 ```yaml
@@ -404,7 +451,7 @@ agpack targets show <name> [--config PATH] [--no-global] Print the resolved mani
 - **JSON formatting is not preserved.** Python's stdlib `json` has no format-preserving parser. agpack canonicalises (`indent=2`) on the *first* write to a JSON file; subsequent syncs are idempotent and won't rewrite it. Hand-edit JSON files in the same shape agpack emits to avoid churn.
 - **Edit-file currently supports only JSON and TOML.** Format is inferred from the path extension; other config formats (YAML, INI, custom DSLs) are not patchable.
 - **`target_definitions:` is full replacement, not extension.** Naming a built-in under `target_definitions:` replaces it wholesale — there is no deep-merge. To add one resource type to Claude (e.g. `personas:`) you have to restate every resource type Claude already declares. Tip: `agpack targets show claude` prints the resolved manifest, copy it under `target_definitions.claude:` as a starting point. The trade-off is intentional — deep-merge across built-in upgrades was judged too magical to ship behind a single config knob.
-- **Cross-target resource types must share a kind.** If two targets both declare a `commands` resource, they have to agree on whether `commands` is `copy-file` or `copy-directory`. When you genuinely need different shapes, declare them under different names and list each entry under the corresponding name. The repetition is the price of clarity:
+- **Cross-target resource types must share a kind.** If two targets both declare a `commands` resource, they have to agree on whether `commands` is `copy-file` or `copy-directory`. (If you only need different *values* per target, not a different *kind* — e.g. one MCP server whose config shape differs by tool — reach for [`target:` scoping](#one-server-two-native-shapes) instead; it's the same resource type, same file, no `target_definitions:` override needed.) When you genuinely need a different kind, declare separate resource type names and list each entry under the corresponding name. The repetition is the price of clarity:
 
   ```yaml
   targets: [tool-a, tool-b]
@@ -440,8 +487,8 @@ See [CHANGELOG.md](CHANGELOG.md). On first `agpack sync` after a major version u
 2. Resolves `${VAR}` references from `.env` files and the shell env (for fetch entries). Patches resolve `${name}` per-target at apply time.
 3. Reads `.agpack.lock.yml` to diff against the previous state.
 4. Cleans up files from removed copy-kind dependencies.
-5. Shallow-clones each repo (sparse checkout when `path` is set) and copies files to every target that declares the matching resource type.
-6. Reconciles edit-file resources: per file, diff old applied patches against the desired set, undo what's gone, apply what's new, leave matched patches alone. Files are only written when their text actually changed.
+5. Shallow-clones each repo (sparse checkout when `path` is set) and copies files to every target that declares the matching resource type (or the entry's own `target:` subset, if it has one).
+6. Reconciles edit-file resources: per file, diff old applied patches against the desired set, undo what's gone, apply what's new, leave matched patches alone. A patch scoped by `target:` is only considered for the targets it lists. Files are only written when their text actually changed.
 7. Writes the updated lockfile.
 
 ## License

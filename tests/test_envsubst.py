@@ -9,9 +9,9 @@ import pytest
 from agpack.config import AgpackConfig
 from agpack.config import ConfigError
 from agpack.config import DependencyEntry
-from agpack.config import DependencySource
 from agpack.config import GlobalConfig
 from agpack.config import resolve_config
+from agpack.dependency_source import DependencySource
 from agpack.envsubst import load_dotenv
 from agpack.envsubst import resolve_env_vars
 from agpack.patch import Patch

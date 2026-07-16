@@ -17,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from agpack.dependency_source import DependencySource
 from agpack.envsubst import build_env
 from agpack.envsubst import resolve_env_vars
 from agpack.errors import ConfigError
@@ -35,42 +36,6 @@ DEFAULT_GLOBAL_CONFIG_DIR = Path.home() / ".config" / "agpack"
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class DependencySource:
-    """A parsed skill, command, or agent dependency (copy-kind input).
-
-    The ``urls`` list contains one or more git clone URLs. The first entry is the canonical (primary) URL used for
-    identity and display. Remaining entries are fallback URLs tried in order when earlier ones fail.
-    """
-
-    urls: list[str]
-    path: str | None = None
-    ref: str | None = None
-
-    @property
-    def url(self) -> str:
-        """The primary (first) URL."""
-        return self.urls[0]
-
-    @property
-    def name(self) -> str:
-        """Derive the resource name (last path segment, or url basename)."""
-        if self.path:
-            return self.path.rstrip("/").rsplit("/", 1)[-1]
-        cleaned = self.url.rstrip("/")
-        if cleaned.endswith(".git"):
-            cleaned = cleaned[:-4]
-        return cleaned.rsplit("/", 1)[-1]
-
-    @property
-    def identity(self) -> str:
-        """A unique key for this dependency (used for lockfile matching)."""
-        key = self.url
-        if self.path:
-            key = f"{key}::{self.path}"
-        return key
 
 
 # A dependency entry under ``dependencies.<rt>`` is either a fetched resource (``DependencySource``) for copy kinds,
@@ -112,8 +77,27 @@ class GlobalConfig:
 # ---------------------------------------------------------------------------
 
 
+def _parse_target_scope(raw: dict[str, Any], context: str) -> tuple[str, ...] | None:
+    """Parse the optional ``target:`` field shared by fetch and patch entries.
+
+    A list of target names this entry is scoped to; ``None`` (the field absent) means "every target that owns this
+    resource type", matching pre-existing behavior. Names aren't validated against ``targets:`` here — target
+    resolution happens later and unknown names are accepted elsewhere too (see target-name validation precedent).
+    """
+    raw_target = raw.get("target")
+    if raw_target is None:
+        return None
+    if not isinstance(raw_target, list) or not raw_target:
+        msg = f"{context}.target: must be a non-empty list of target names"
+        raise ConfigError(msg)
+    if any(not isinstance(t, str) or not t for t in raw_target):
+        msg = f"{context}.target: entries must be non-empty strings, got {raw_target!r}"
+        raise ConfigError(msg)
+    return tuple(raw_target)
+
+
 def _parse_fetch_entry(raw: dict[str, Any], context: str) -> DependencySource:
-    """Parse a fetch (copy-kind) dependency entry: ``url`` (+ optional path/ref)."""
+    """Parse a fetch (copy-kind) dependency entry: ``url`` (+ optional path/ref/target)."""
     raw_url = raw.get("url")
     if isinstance(raw_url, str):
         if not raw_url:
@@ -138,20 +122,22 @@ def _parse_fetch_entry(raw: dict[str, Any], context: str) -> DependencySource:
     if ref is not None:
         ref = str(ref)
 
-    known = {"url", "path", "ref"}
+    target_scope = _parse_target_scope(raw, context)
+
+    known = {"url", "path", "ref", "target"}
     extra = set(raw) - known
     if extra:
         msg = f"{context}: unknown fields {sorted(extra)}"
         raise ConfigError(msg)
 
-    return DependencySource(urls=urls, path=path, ref=ref)
+    return DependencySource(urls=urls, path=path, ref=ref, targets=target_scope)
 
 
 _VALID_STRATEGIES = ("replace", "append")
 
 
 def _parse_patch_entry(raw: dict[str, Any], context: str) -> Patch:
-    """Parse an edit-file entry: ``key``, ``value``, optional ``strategy``."""
+    """Parse an edit-file entry: ``key``, ``value``, optional ``strategy``/``target``."""
     key = raw.get("key")
     if not isinstance(key, str) or not key:
         msg = f"{context}: 'key' must be a non-empty string"
@@ -166,13 +152,15 @@ def _parse_patch_entry(raw: dict[str, Any], context: str) -> Patch:
         msg = f"{context}: 'strategy' must be one of {_VALID_STRATEGIES}, got {strategy!r}"
         raise ConfigError(msg)
 
-    known = {"key", "value", "strategy"}
+    target_scope = _parse_target_scope(raw, context)
+
+    known = {"key", "value", "strategy", "target"}
     extra = set(raw) - known
     if extra:
         msg = f"{context}: unknown fields {sorted(extra)}"
         raise ConfigError(msg)
 
-    return Patch(key=key, value=raw["value"], strategy=strategy)
+    return Patch(key=key, value=raw["value"], strategy=strategy, targets=target_scope)
 
 
 def _parse_dependency_entry(raw: Any, context: str) -> DependencyEntry:
@@ -371,8 +359,9 @@ def merge_configs(project: AgpackConfig, global_cfg: GlobalConfig) -> AgpackConf
     """Merge a global config into a project config.
 
     Global dependencies are appended after project dependencies. Fetch entries are deduplicated by
-    :attr:`DependencySource.identity`; patch entries are deduplicated by ``(key, value, strategy)`` content. Project
-    entries always win on conflict.
+    :attr:`DependencySource.identity`; patch entries are deduplicated by ``(key, value, strategy, targets)``
+    content, so a project patch and a global patch at the same key but disjoint ``target:`` scopes are treated as
+    distinct entries, not duplicates. Project entries always win on conflict.
 
     Returns a **new** :class:`AgpackConfig`; the inputs are not mutated.
     """
@@ -405,19 +394,20 @@ def _dedup_key(entry: DependencyEntry) -> Any:
     Fetch entries are deduped by url+path. Patch entries depend on
     strategy:
 
-    - ``replace``: deduped by ``key`` — two patches that both set the
-      same key are duplicates (project wins).
-    - ``append``: deduped by ``(key, value)`` — two appends at the
+    - ``replace``: deduped by ``(key, targets)`` — two patches that both set the same key are duplicates only if
+      they're scoped to the same targets. A project patch and a global patch at the same key but disjoint
+      ``target:`` scopes (the whole point of that feature) must both survive the merge.
+    - ``append``: deduped by ``(key, value, targets)`` — two appends at the
       same key with different values are *distinct* entries.
     """
     if isinstance(entry, DependencySource):
         return ("fetch", entry.identity)
     if entry.strategy == "replace":
-        return ("patch", "replace", entry.key)
+        return ("patch", "replace", entry.key, entry.targets)
     # ``default=str`` covers any oddballs that aren't natively JSON-encodable (datetimes, custom scalars from YAML).
     # The output is a deterministic string identity for dict-key use, not something we round-trip.
     value_repr = json.dumps(entry.value, sort_keys=True, default=str)
-    return ("patch", "append", entry.key, value_repr)
+    return ("patch", "append", entry.key, value_repr, entry.targets)
 
 
 # ---------------------------------------------------------------------------

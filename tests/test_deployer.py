@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agpack.config import DependencySource
+from agpack.dependency_source import DependencySource
 from agpack.deployer import cleanup_deployed_files
 from agpack.deployer import deploy_item
 from agpack.deployer import detect_items
@@ -720,3 +720,61 @@ class TestSyncEditResourceDedup:
         assert len(applied) == 1
         mcp = json.loads((project / ".mcp.json").read_text())
         assert mcp == {"mcpServers": {"filesystem": {"command": "npx"}}}
+
+
+class TestSyncEditResourceTargetScope:
+    """Two patches at the *same* key, each scoped to a disjoint target via ``Patch.targets`` — the real-world case is
+    one MCP server whose value shape differs between Claude and OpenCode. Without scoping this would trip the
+    same-identity collision check in ``EditFileResource.sync_patches``; with scoping, each target only ever sees the
+    one patch meant for it.
+    """
+
+    def test_disjoint_scopes_at_same_key_do_not_collide(self, tmp_path: Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        targets = [_BUILTINS["claude"], _BUILTINS["opencode"]]
+
+        claude_shape = Patch(
+            key="${bucket}.context7",
+            value={"type": "stdio", "command": "npx", "args": ["-y", "ctx7"]},
+            targets=("claude",),
+        )
+        opencode_shape = Patch(
+            key="${bucket}.context7",
+            value={"type": "local", "command": ["npx", "-y", "ctx7"], "enabled": True},
+            targets=("opencode",),
+        )
+
+        applied = sync_edit_resource(
+            resource_type="mcp",
+            desired=[claude_shape, opencode_shape],
+            applied_old=[],
+            targets=targets,
+            project_root=project,
+        )
+
+        assert len(applied) == 2
+        claude_mcp = json.loads((project / ".mcp.json").read_text())
+        assert claude_mcp == {"mcpServers": {"context7": {"type": "stdio", "command": "npx", "args": ["-y", "ctx7"]}}}
+
+        opencode_mcp = json.loads((project / "opencode.json").read_text())
+        expected = {"type": "local", "command": ["npx", "-y", "ctx7"], "enabled": True}
+        assert opencode_mcp == {"mcp": {"context7": expected}}
+
+    def test_scoped_patch_absent_from_out_of_scope_target(self, tmp_path: Path) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        targets = [_BUILTINS["claude"], _BUILTINS["opencode"]]
+
+        claude_only = Patch(key="${bucket}.filesystem", value={"command": "npx"}, targets=("claude",))
+
+        sync_edit_resource(
+            resource_type="mcp",
+            desired=[claude_only],
+            applied_old=[],
+            targets=targets,
+            project_root=project,
+        )
+
+        assert (project / ".mcp.json").exists()
+        assert not (project / "opencode.json").exists()

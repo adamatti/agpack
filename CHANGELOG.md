@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-07-16
+
+### Added
+
+- **`target:` scope on dependency entries.** Any fetch entry (`skills`/`commands`/`agents`) or patch entry (`mcp`/`hooks`/...) can now list `target: [name, ...]` to restrict it to a subset of the configured `targets:`, instead of every target that declares the resource type. Lets one dependency write a genuinely different value per tool at the same key — e.g. two `mcp` patches for `${bucket}.context7`, one scoped to `[claude]` in Claude's `type: stdio` shape, one scoped to `[opencode]` in OpenCode's `type: local` shape — without inventing a second resource-type name or a full `target_definitions:` override. A typo'd target name fails `agpack sync`/`agpack status` immediately, same treatment as an unknown name in the top-level `targets:` list.
+
+### Changed
+
+- **`DependencySource` moved to its own module** (`agpack.dependency_source`), mirroring `agpack.patch`. `agpack.config` still uses it internally (for `DependencyEntry`, parsing, dedup) but no longer defines it, and every other importer (`cli.py`, `fetcher.py`, tests) now imports it from `agpack.dependency_source` directly — no re-export, no leaf module has to import the parsing layer just to get its own domain type.
+
 ## [0.4.4] - 2026-06-22
 
 ### Added

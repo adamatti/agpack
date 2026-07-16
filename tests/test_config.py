@@ -9,11 +9,11 @@ import pytest
 from agpack.config import AgpackConfig
 from agpack.config import ConfigError
 from agpack.config import DependencyEntry
-from agpack.config import DependencySource
 from agpack.config import GlobalConfig
 from agpack.config import load_config
 from agpack.config import load_global_config
 from agpack.config import merge_configs
+from agpack.dependency_source import DependencySource
 from agpack.patch import Patch
 
 # ---------------------------------------------------------------------------
@@ -402,6 +402,93 @@ dependencies:
         load_config(cfg_path)
 
 
+# ---------------------------------------------------------------------------
+# 4b. `target:` scope on patch and fetch entries
+# ---------------------------------------------------------------------------
+
+
+def test_patch_target_scope_parsed(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude, opencode]
+dependencies:
+  mcp:
+    - key: ${bucket}.context7
+      value: {type: stdio, command: npx}
+      target: [claude]
+    - key: ${bucket}.context7
+      value: {type: local, command: [npx]}
+      target: [opencode]
+""",
+    )
+    entries = load_config(cfg_path).dependencies["mcp"]
+    assert entries[0].targets == ("claude",)
+    assert entries[1].targets == ("opencode",)
+
+
+def test_patch_target_scope_defaults_to_none(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  mcp:
+    - key: mcpServers.fs
+      value: {command: npx}
+""",
+    )
+    assert load_config(cfg_path).dependencies["mcp"][0].targets is None
+
+
+def test_patch_target_scope_must_be_a_list(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  mcp:
+    - key: mcpServers.fs
+      value: {command: npx}
+      target: claude
+""",
+    )
+    with pytest.raises(ConfigError, match="target: must be a non-empty list"):
+        load_config(cfg_path)
+
+
+def test_patch_target_scope_rejects_empty_list(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  mcp:
+    - key: mcpServers.fs
+      value: {command: npx}
+      target: []
+""",
+    )
+    with pytest.raises(ConfigError, match="target: must be a non-empty list"):
+        load_config(cfg_path)
+
+
+def test_fetch_target_scope_parsed(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude, opencode]
+dependencies:
+  skills:
+    - url: https://github.com/owner/skill-repo
+      target: [claude]
+""",
+    )
+    dep = load_config(cfg_path).dependencies["skills"][0]
+    assert isinstance(dep, DependencySource)
+    assert dep.targets == ("claude",)
+
+
 def test_append_patches_with_distinct_values_allowed(tmp_path: Path) -> None:
     """Two append patches at the same key with different values are distinct list elements — both must survive."""
     cfg_path = _write_config(
@@ -638,6 +725,23 @@ def test_merge_dedupes_patches_by_content() -> None:
 def test_merge_keeps_distinct_patches() -> None:
     project = _make_project_config(mcp=[Patch(key="mcpServers.fs", value={"command": "npx"})])
     global_cfg = _make_global_config(mcp=[Patch(key="mcpServers.other", value={"command": "x"})])
+    merged = merge_configs(project, global_cfg)
+    assert len(merged.dependencies["mcp"]) == 2
+
+
+def test_merge_keeps_same_key_patches_with_disjoint_target_scopes() -> None:
+    """A project patch and a global patch at the same key but scoped to different targets are distinct entries.
+
+    This is the cross-config version of the same-key/disjoint-target pattern `target:` scoping exists for (see
+    `TestSyncEditResourceTargetScope` in test_deployer.py) — the merge dedup must not collapse them just because
+    the project one happens to win on identical-key conflicts.
+    """
+    project = _make_project_config(
+        mcp=[Patch(key="${bucket}.context7", value={"type": "stdio", "command": "npx"}, targets=("claude",))],
+    )
+    global_cfg = _make_global_config(
+        mcp=[Patch(key="${bucket}.context7", value={"type": "local", "command": ["npx"]}, targets=("opencode",))],
+    )
     merged = merge_configs(project, global_cfg)
     assert len(merged.dependencies["mcp"]) == 2
 

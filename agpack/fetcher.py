@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from agpack.config import DependencySource
+from agpack.dependency_source import DependencySource
 from agpack.envsubst import resolve_env_vars
 from agpack.errors import FetchError
 
