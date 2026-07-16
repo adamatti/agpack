@@ -43,6 +43,7 @@ from agpack.fetcher import FetchResult
 from agpack.fetcher import cleanup_fetch
 from agpack.fetcher import fetch_dependency
 from agpack.fetcher import ls_remote
+from agpack.fs import iter_tree_files
 from agpack.kinds import EditFileResource
 from agpack.lockfile import AppliedPatch
 from agpack.lockfile import EditLockEntry
@@ -68,11 +69,7 @@ def _source_file_count(item_path: Path) -> int:
     """
     if item_path.is_file():
         return 1
-    return sum(
-        1
-        for f in item_path.rglob("*")
-        if f.is_file() and not any(p.startswith(".git") for p in f.relative_to(item_path).parts)
-    )
+    return sum(1 for _ in iter_tree_files(item_path))
 
 
 @dataclass
@@ -713,8 +710,7 @@ def _is_patch_synced(
     owners = [
         t
         for t in target_defs
-        if isinstance(t.resources.get(resource_type), EditFileResource)
-        and (dep.targets is None or t.name in dep.targets)
+        if isinstance(t.resources.get(resource_type), EditFileResource) and dep.applies_to(t.name)
     ]
     if not owners:
         return False

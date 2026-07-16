@@ -11,9 +11,9 @@ import pytest
 
 from agpack.errors import ConfigError
 from agpack.errors import EditFileError
+from agpack.fs import _atomic_write
 from agpack.kinds import EditFileResource
 from agpack.kinds import infer_config_format
-from agpack.kinds._shared import _atomic_write
 from agpack.kinds.edit_file import _apply_patch
 from agpack.kinds.edit_file import _undo_resolved
 from agpack.lockfile import AppliedPatch
@@ -502,7 +502,7 @@ class TestIdempotency:
         mtime_before = path.stat().st_mtime_ns
         # Re-running with the same desired state must produce no write.
         with mock_patch(
-            "agpack.kinds._shared._atomic_write",
+            "agpack.fs._atomic_write",
             side_effect=AssertionError("file was rewritten despite no change"),
         ):
             resource.sync_patches(
@@ -665,7 +665,7 @@ class TestErrors:
     def test_oserror_on_write_wrapped(self, tmp_path: Path) -> None:
         resource = EditFileResource(path=".mcp.json")
         with (
-            mock_patch("agpack.kinds._shared._atomic_write", side_effect=OSError("disk full")),
+            mock_patch("agpack.fs._atomic_write", side_effect=OSError("disk full")),
             pytest.raises(EditFileError, match="Failed to write.*disk full"),
         ):
             _apply(resource, [Patch(key="x", value=1)], tmp_path)
@@ -838,7 +838,7 @@ class TestAtomicWriteFailure:
         target = tmp_path / "output.json"
         with (
             mock_patch(
-                "agpack.kinds._shared.os.replace",
+                "agpack.fs.os.replace",
                 side_effect=OSError("disk full"),
             ),
             pytest.raises(OSError, match="disk full"),

@@ -10,6 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+def dependency_identity(url: str, path: str | None) -> str:
+    """A unique key for a copy-kind dependency: ``url`` alone, or ``url::path`` when a subpath is set.
+
+    Both :attr:`DependencySource.identity` and the lockfile's ``InstalledEntry.identity`` route through this one
+    formula so copy-kind lockfile matching can't silently drift apart between the two modules.
+    """
+    return f"{url}::{path}" if path else url
+
+
 @dataclass
 class DependencySource:
     """A parsed skill, command, or agent dependency (copy-kind input).
@@ -35,15 +44,10 @@ class DependencySource:
         """Derive the resource name (last path segment, or url basename)."""
         if self.path:
             return self.path.rstrip("/").rsplit("/", 1)[-1]
-        cleaned = self.url.rstrip("/")
-        if cleaned.endswith(".git"):
-            cleaned = cleaned[:-4]
+        cleaned = self.url.rstrip("/").removesuffix(".git")
         return cleaned.rsplit("/", 1)[-1]
 
     @property
     def identity(self) -> str:
         """A unique key for this dependency (used for lockfile matching)."""
-        key = self.url
-        if self.path:
-            key = f"{key}::{self.path}"
-        return key
+        return dependency_identity(self.url, self.path)

@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
-import os
-import tempfile
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import UTC
@@ -15,7 +12,9 @@ from typing import Any
 import yaml
 
 from agpack import __version__
+from agpack.dependency_source import dependency_identity
 from agpack.display import console
+from agpack.fs import atomic_replace
 
 LOCKFILE_NAME = ".agpack.lock.yml"
 
@@ -35,10 +34,7 @@ class InstalledEntry:
     @property
     def identity(self) -> str:
         """Unique key matching DependencySource.identity."""
-        key = self.url
-        if self.path:
-            key = f"{key}::{self.path}"
-        return key
+        return dependency_identity(self.url, self.path)
 
 
 @dataclass
@@ -217,16 +213,8 @@ def write_lockfile(project_root: Path, lockfile: Lockfile) -> None:
     path = project_root / LOCKFILE_NAME
     content = yaml.dump(data, default_flow_style=False, sort_keys=False)
 
-    fd, tmp_path = tempfile.mkstemp(dir=project_root, prefix=".agpack-lock-tmp-")
-    tmp = Path(tmp_path)
-    try:
-        os.close(fd)
+    with atomic_replace(path, prefix=".agpack-lock-tmp-") as tmp:
         tmp.write_text(content, encoding="utf-8")
-        tmp.replace(path)
-    except Exception:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-        raise
 
 
 # ---------------------------------------------------------------------------

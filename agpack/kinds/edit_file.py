@@ -30,7 +30,7 @@ from agpack.display import console
 from agpack.envsubst import resolve_env_vars
 from agpack.envsubst import resolve_env_vars_recursive
 from agpack.errors import EditFileError
-from agpack.kinds._shared import write_if_changed
+from agpack.fs import write_if_changed
 from agpack.lockfile import AppliedPatch
 from agpack.patch import Patch
 from agpack.patch import match_key
@@ -41,7 +41,7 @@ from agpack.patch import value_hash
 # ---------------------------------------------------------------------------
 
 
-_FORMAT_BY_SUFFIX = {".json": "json", ".toml": "toml"}
+_FORMAT_BY_SUFFIX: dict[str, Literal["json", "toml"]] = {".json": "json", ".toml": "toml"}
 
 
 def infer_config_format(path: str) -> Literal["json", "toml"]:
@@ -50,10 +50,9 @@ def infer_config_format(path: str) -> Literal["json", "toml"]:
     The extension is the single source of truth — there is no override.
     """
     lower = path.lower()
-    if lower.endswith(".toml"):
-        return "toml"
-    if lower.endswith(".json"):
-        return "json"
+    for suffix, fmt in _FORMAT_BY_SUFFIX.items():
+        if lower.endswith(suffix):
+            return fmt
     valid = ", ".join(sorted(_FORMAT_BY_SUFFIX))
     msg = f"cannot infer config format from '{path}' — path must end in one of: {valid}"
     raise EditFileError(msg)
@@ -208,7 +207,7 @@ def _read_existing(config_path: Path, format_: str) -> dict[str, Any]:
     re-emits the document preserving everything we didn't touch.
 
     JSON has no equivalent format-preserving parser in stdlib; canonicalization on write is unavoidable, but the
-    :func:`_write_if_changed` guard at write time prevents no-op churn on unchanged content.
+    :func:`write_if_changed` guard at write time prevents no-op churn on unchanged content.
     """
     if not config_path.exists():
         return tomlkit.document() if format_ == "toml" else {}
@@ -397,17 +396,15 @@ class EditFileResource:
             ap = old_by_match[mk]
             rp = new_by_match[mk]
             new_hash = value_hash(rp.value)
+            # The intersection always re-applies. When the hashes agree, this covers the committed-lockfile +
+            # fresh-clone case where the lockfile records a patch but the destination file was never created on this
+            # machine; ``_apply_patch`` is idempotent (replace = assign; append checks for an existing hash-match), so
+            # it's a no-op when the file already has the entry and ``write_if_changed`` skips the disk write. When the
+            # hashes differ it's a ``replace`` with the same key and a new value.
+            _apply_patch(data, rp)
             if ap.value_hash == new_hash:
-                # Lockfile and config agree this patch is current. We still call ``_apply_patch`` so the destination
-                # file actually contains the entry — covers the committed-lockfile + fresh-clone case where the
-                # lockfile records a patch but the destination file was never created on this machine.
-                # ``_apply_patch`` is idempotent (replace = assign; append checks for an existing hash-match), so this
-                # is a no-op when the file already has the entry — ``write_if_changed`` will skip the disk write.
-                _apply_patch(data, rp)
                 result.append(ap)
                 continue
-            # ``replace`` with same key, different value: apply the new value.
-            _apply_patch(data, rp)
             result.append(
                 AppliedPatch(
                     file_path=self.path,

@@ -79,8 +79,8 @@ def load_dotenv(project_root: Path) -> dict[str, str]:
         if line.startswith("export "):
             line = line[len("export ") :]
 
-        key, _, value = line.partition("=")
-        if not _:
+        key, sep, value = line.partition("=")
+        if not sep:
             continue  # no '=' found — skip malformed line
 
         key = key.strip()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from agpack.registry import list_builtins
-from agpack.registry import load_all_builtins
 from agpack.registry import load_builtin
 from agpack.target_schema import TargetSchemaError
 
@@ -40,7 +39,3 @@ def test_each_builtin_loads(name: str) -> None:
 def test_load_builtin_unknown_raises() -> None:
     with pytest.raises(TargetSchemaError, match="No built-in target"):
         load_builtin("nonexistent")
-
-
-def test_load_all_builtins_returns_full_map() -> None:
-    assert set(load_all_builtins()) == EXPECTED_BUILTINS

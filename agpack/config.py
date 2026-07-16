@@ -96,22 +96,24 @@ def _parse_target_scope(raw: dict[str, Any], context: str) -> tuple[str, ...] | 
     return tuple(raw_target)
 
 
+def _reject_unknown(known: set[str], raw: dict[str, Any], context: str) -> None:
+    """Raise :class:`ConfigError` if *raw* carries any field outside *known*."""
+    extra = set(raw) - known
+    if extra:
+        msg = f"{context}: unknown fields {sorted(extra)}"
+        raise ConfigError(msg)
+
+
 def _parse_fetch_entry(raw: dict[str, Any], context: str) -> DependencySource:
     """Parse a fetch (copy-kind) dependency entry: ``url`` (+ optional path/ref/target)."""
     raw_url = raw.get("url")
-    if isinstance(raw_url, str):
-        if not raw_url:
-            msg = f"{context}: 'url' must not be empty"
-            raise ConfigError(msg)
-        urls = [raw_url]
-    elif isinstance(raw_url, list):
-        if not raw_url:
-            msg = f"{context}: 'url' must not be empty"
-            raise ConfigError(msg)
-        urls = [str(u) for u in raw_url]
-    else:
+    if not isinstance(raw_url, (str, list)):
         msg = f"{context}: 'url' must be a string or list of strings"
         raise ConfigError(msg)
+    if not raw_url:
+        msg = f"{context}: 'url' must not be empty"
+        raise ConfigError(msg)
+    urls = [raw_url] if isinstance(raw_url, str) else [str(u) for u in raw_url]
 
     path = raw.get("path")
     if path is not None and not isinstance(path, str):
@@ -123,12 +125,7 @@ def _parse_fetch_entry(raw: dict[str, Any], context: str) -> DependencySource:
         ref = str(ref)
 
     target_scope = _parse_target_scope(raw, context)
-
-    known = {"url", "path", "ref", "target"}
-    extra = set(raw) - known
-    if extra:
-        msg = f"{context}: unknown fields {sorted(extra)}"
-        raise ConfigError(msg)
+    _reject_unknown({"url", "path", "ref", "target"}, raw, context)
 
     return DependencySource(urls=urls, path=path, ref=ref, targets=target_scope)
 
@@ -153,12 +150,7 @@ def _parse_patch_entry(raw: dict[str, Any], context: str) -> Patch:
         raise ConfigError(msg)
 
     target_scope = _parse_target_scope(raw, context)
-
-    known = {"key", "value", "strategy", "target"}
-    extra = set(raw) - known
-    if extra:
-        msg = f"{context}: unknown fields {sorted(extra)}"
-        raise ConfigError(msg)
+    _reject_unknown({"key", "value", "strategy", "target"}, raw, context)
 
     return Patch(key=key, value=raw["value"], strategy=strategy, targets=target_scope)
 
@@ -453,11 +445,8 @@ def resolve_config(
         for entry in entries:
             if isinstance(entry, DependencySource):
                 ctx = f"dependency '{entry.name}'"
-                for u in entry.urls:
-                    resolve_env_vars(u, merged, context=ctx)
-                if entry.path is not None:
-                    resolve_env_vars(entry.path, merged, context=ctx)
-                if entry.ref is not None:
-                    resolve_env_vars(entry.ref, merged, context=ctx)
+                for template in (*entry.urls, entry.path, entry.ref):
+                    if template is not None:
+                        resolve_env_vars(template, merged, context=ctx)
 
     return merged

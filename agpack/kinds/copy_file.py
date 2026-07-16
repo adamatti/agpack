@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING
 from typing import ClassVar
 
 from agpack.errors import DeployError
-from agpack.kinds._shared import atomic_copy_file
-from agpack.kinds._shared import find_asset_subfolders
-from agpack.kinds._shared import find_top_level_files
+from agpack.fs import atomic_copy_file
+from agpack.fs import find_asset_subfolders
+from agpack.fs import find_top_level_files
 
 if TYPE_CHECKING:
     from agpack.fetcher import FetchResult

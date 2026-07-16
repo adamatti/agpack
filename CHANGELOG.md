@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.6] - 2026-07-16
+
+### Changed
+
+- **Internal clean-up pass with no behavior change.** Deduplicated the write-temp-then-rename skeleton behind a single `atomic_replace` helper, routed both `DependencySource` and the lockfile's `InstalledEntry` through one `dependency_identity()` formula so copy-kind lockfile matching can no longer silently drift, and extracted the shared `.git`-skipping tree walk (`iter_tree_files`) so the source-file count always matches what gets copied. The filesystem helpers moved from the package-private `agpack.kinds._shared` to a neutral `agpack.fs` leaf now that the CLI and lockfile writer use them too. Also dropped a handful of dead guards and hand-rolled stdlib reinventions. Public CLI behavior and `agpack.yml` handling are unchanged.
+
 ## [0.4.5] - 2026-07-16
 
 ### Added

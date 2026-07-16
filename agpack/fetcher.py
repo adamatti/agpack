@@ -61,6 +61,7 @@ def _run_git(args: list[str], cwd: str | Path | None = None) -> subprocess.Compl
     :func:`_redact` so a resolved ``${GITHUB_TOKEN}`` in the URL never reaches a caller that might log the result.
     """
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    redacted_args = ["git", *(_redact(a) for a in args)]
     try:
         result = subprocess.run(
             ["git", *args],
@@ -72,13 +73,13 @@ def _run_git(args: list[str], cwd: str | Path | None = None) -> subprocess.Compl
         )
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(
-            args=["git", *(_redact(a) for a in args)],
+            args=redacted_args,
             returncode=1,
             stdout="",
             stderr=f"Git operation timed out after {_GIT_TIMEOUT_SECONDS} seconds",
         )
     return subprocess.CompletedProcess(
-        args=["git", *(_redact(a) for a in args)],
+        args=redacted_args,
         returncode=result.returncode,
         stdout=_redact(result.stdout),
         stderr=_redact(result.stderr),

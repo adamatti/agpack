@@ -23,11 +23,11 @@ _BUILTIN_SUFFIX = ".yml"
 
 def list_builtins() -> list[str]:
     """Return the sorted list of built-in target names."""
-    names: list[str] = []
-    for entry in files(_BUILTIN_PACKAGE).iterdir():
-        if entry.is_file() and entry.name.endswith(_BUILTIN_SUFFIX):
-            names.append(entry.name[: -len(_BUILTIN_SUFFIX)])
-    return sorted(names)
+    return sorted(
+        entry.name.removesuffix(_BUILTIN_SUFFIX)
+        for entry in files(_BUILTIN_PACKAGE).iterdir()
+        if entry.is_file() and entry.name.endswith(_BUILTIN_SUFFIX)
+    )
 
 
 def load_builtin(name: str) -> TargetDef:
@@ -53,8 +53,3 @@ def load_builtin(name: str) -> TargetDef:
         raise TargetSchemaError(msg) from exc
 
     return parse_target_def(data, name=name, context=f"builtin_targets/{name}{_BUILTIN_SUFFIX}")
-
-
-def load_all_builtins() -> dict[str, TargetDef]:
-    """Load every shipped built-in manifest, keyed by name."""
-    return {name: load_builtin(name) for name in list_builtins()}

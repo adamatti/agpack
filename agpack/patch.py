@@ -40,6 +40,15 @@ class Patch:
     strategy: Strategy = "replace"
     targets: tuple[str, ...] | None = None
 
+    def applies_to(self, target_name: str) -> bool:
+        """True if this patch is in scope for the target named *target_name*.
+
+        ``targets is None`` means every target that owns the resource type; otherwise the name must be listed. The
+        deploy site (:func:`agpack.deployer.sync_edit_resource`) and the status site (:func:`agpack.cli.status`) both
+        route through here so their scoping can't drift apart.
+        """
+        return self.targets is None or target_name in self.targets
+
 
 def match_key(strategy: str, key: str, value_hash: str) -> tuple[Any, ...]:
     """Identity tuple for diffing patches across syncs.
@@ -48,7 +57,7 @@ def match_key(strategy: str, key: str, value_hash: str) -> tuple[Any, ...]:
     ``append`` patches identify by ``(key, value_hash)`` — different appended values are distinct list elements.
 
     Callers normalise to primitives before calling: pull ``strategy`` and ``key`` from the patch directly, and use
-    :func:`_value_hash` on the resolved value for a :class:`Patch` or the stored ``value_hash`` for an applied entry.
+    :func:`value_hash` on the resolved value for a :class:`Patch` or the stored ``value_hash`` for an applied entry.
     """
     if strategy == "replace":
         return ("replace", key)

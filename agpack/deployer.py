@@ -70,6 +70,14 @@ def deploy_item(
 # ===========================================================================
 
 
+def _group_by_file(applied: list[AppliedPatch]) -> dict[str, list[AppliedPatch]]:
+    """Group applied-patch records by their ``file_path`` so each file's patches are reconciled together."""
+    by_file: dict[str, list[AppliedPatch]] = defaultdict(list)
+    for ap in applied:
+        by_file[ap.file_path].append(ap)
+    return by_file
+
+
 def sync_edit_resource(
     resource_type: str,
     desired: list[Patch],
@@ -94,9 +102,7 @@ def sync_edit_resource(
     The returned :class:`AppliedPatch` list is the new authoritative state for the lockfile.
     """
     # Group old applied entries by file_path so each target picks up only what was previously written to *its* file.
-    old_by_file: dict[str, list[AppliedPatch]] = defaultdict(list)
-    for entry in applied_old:
-        old_by_file[entry.file_path].append(entry)
+    old_by_file = _group_by_file(applied_old)
 
     new_applied: list[AppliedPatch] = []
     matched_any = False
@@ -114,7 +120,7 @@ def sync_edit_resource(
             continue
         touched_files.add(resource.path)
         # Scope desired patches to this target: a patch with `targets` set only applies where its name is listed.
-        scoped_desired = [p for p in desired if p.targets is None or target.name in p.targets]
+        scoped_desired = [p for p in desired if p.applies_to(target.name)]
         new_applied.extend(
             resource.sync_patches(
                 applied_old=old_by_file.get(resource.path, []),
@@ -129,7 +135,7 @@ def sync_edit_resource(
     # ``targets:``) need their old patches reversed too. Resolved keys live on the entries, so cleanup needs no
     # target lookup.
     for file_path, leftovers in old_by_file.items():
-        if file_path in touched_files or not leftovers:
+        if file_path in touched_files:
             continue
         EditFileResource(path=file_path).cleanup_patches(leftovers, project_root, verbose=verbose)
 
@@ -154,10 +160,7 @@ def cleanup_orphaned_edits(
     Each :class:`AppliedPatch` carries its already-resolved key, so cleanup needs neither the originating target nor
     the env table — it dispatches directly to the file for each path it has records for.
     """
-    by_file: dict[str, list[AppliedPatch]] = defaultdict(list)
-    for ap in applied_old:
-        by_file[ap.file_path].append(ap)
-    for file_path, entries in by_file.items():
+    for file_path, entries in _group_by_file(applied_old).items():
         EditFileResource(path=file_path).cleanup_patches(entries, project_root, verbose=verbose)
 
 
@@ -193,5 +196,5 @@ def _cleanup_empty_dirs(deployed_files: list[str], project_root: Path) -> None:
             parent = parent.parent
 
     for d in sorted(dirs_to_check, key=lambda p: len(p.parts), reverse=True):
-        if d.exists() and d.is_dir() and not any(d.iterdir()):
+        if d.is_dir() and not any(d.iterdir()):
             d.rmdir()

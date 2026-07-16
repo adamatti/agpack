@@ -17,16 +17,17 @@ from agpack.deployer import detect_items
 from agpack.deployer import sync_edit_resource
 from agpack.errors import DeployError
 from agpack.fetcher import FetchResult
-from agpack.kinds._shared import atomic_copy_file
+from agpack.fs import atomic_copy_file
 from agpack.patch import Patch
-from agpack.registry import load_all_builtins
+from agpack.registry import list_builtins
+from agpack.registry import load_builtin
 from agpack.target_schema import TargetDef
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-_BUILTINS = load_all_builtins()
+_BUILTINS = {name: load_builtin(name) for name in list_builtins()}
 
 ALL_TARGETS = sorted(_BUILTINS)
 
@@ -613,7 +614,7 @@ class TestAtomicCopyFailure:
         dst = tmp_path / "out" / "dst.txt"
 
         with (
-            patch("agpack.kinds._shared.shutil.copy2", side_effect=OSError("no space")),
+            patch("agpack.fs.shutil.copy2", side_effect=OSError("no space")),
             pytest.raises(OSError, match="no space"),
         ):
             atomic_copy_file(src, dst)
