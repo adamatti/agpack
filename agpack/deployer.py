@@ -48,19 +48,23 @@ def deploy_item(
     resource_type: str,
     targets: list[TargetDef],
     project_root: Path,
+    dest: str | None = None,
 ) -> list[str]:
     """Deploy one item to every target that supports ``resource_type``.
 
     *targets* is whatever the caller has already decided is in scope — the full configured target list, or a
     dependency's own ``target:`` subset resolved to real :class:`TargetDef` objects by
     :func:`agpack.cli._resolve_entry_targets`. This function doesn't know or care which.
+
+    *dest*, when set, overrides *name* as the deployed leaf under each target's resource ``path``.
     """
+    item_name = dest or name
     deployed: list[str] = []
     for target in targets:
         resource = target.resources.get(resource_type)
         if not isinstance(resource, CopyResource):
             continue
-        deployed.extend(resource.deploy_item(name, src_path, project_root))
+        deployed.extend(resource.deploy_item(item_name, src_path, project_root))
 
     return deployed
 

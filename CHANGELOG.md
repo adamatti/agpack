@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`dest` on fetch dependencies.** A fetch entry can now override the deployed item name (the leaf under a target's resource `path`) via a `dest:` field — e.g. `path: SKILL.md` + `dest: humanizer` deploys to `.claude/skills/humanizer/SKILL.md` instead of `.claude/skills/SKILL.md/`. `dest` is only valid when the entry resolves to a single item; an expanding source rejects it. Since a `path:` list bundles several sources under one entry (where a single `dest:` field can't rename each), an inline `path: <repo-path>:<dest>` shorthand lets every list entry carry its own destination. An explicit `dest:` field wins over the inline suffix. Resolves [#18](https://github.com/PhilippTh/agpack/issues/18).
+
 ## [0.4.6] - 2026-07-16
 
 ### Changed

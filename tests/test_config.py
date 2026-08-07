@@ -268,6 +268,109 @@ dependencies:
     assert dep.ref == "main"
 
 
+def test_fetch_entry_with_dest(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  skills:
+    - url: https://github.com/blader/humanizer
+      path: SKILL.md
+      dest: humanizer
+""",
+    )
+    cfg = load_config(cfg_path)
+    dep = cfg.dependencies["skills"][0]
+    assert isinstance(dep, DependencySource)
+    assert dep.dest == "humanizer"
+
+
+def test_fetch_entry_path_colon_dest_shorthand(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  skills:
+    - url: https://github.com/blader/humanizer
+      path: SKILL.md:humanizer
+""",
+    )
+    cfg = load_config(cfg_path)
+    dep = cfg.dependencies["skills"][0]
+    assert isinstance(dep, DependencySource)
+    assert dep.path == "SKILL.md"
+    assert dep.dest == "humanizer"
+
+
+def test_fetch_entry_path_colon_dest_per_list_entry(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  skills:
+    - url: https://github.com/owner/repo
+      path:
+        - skills/a:alpha
+        - skills/b
+""",
+    )
+    cfg = load_config(cfg_path)
+    skills = cfg.dependencies["skills"]
+    assert [(s.path, s.dest) for s in skills] == [("skills/a", "alpha"), ("skills/b", None)]
+
+
+def test_fetch_entry_explicit_dest_wins_over_path_shorthand(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  skills:
+    - url: https://github.com/owner/repo
+      path: skills/a:alpha
+      dest: override
+""",
+    )
+    cfg = load_config(cfg_path)
+    dep = cfg.dependencies["skills"][0]
+    assert isinstance(dep, DependencySource)
+    assert dep.path == "skills/a"
+    assert dep.dest == "override"
+
+
+def test_fetch_entry_path_shorthand_empty_side_rejected(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  skills:
+    - url: https://github.com/owner/repo
+      path: "skills/a:"
+""",
+    )
+    with pytest.raises(ConfigError, match="shorthand must be"):
+        load_config(cfg_path)
+
+
+def test_fetch_entry_dest_must_be_non_empty_string(tmp_path: Path) -> None:
+    cfg_path = _write_config(
+        tmp_path,
+        """\
+targets: [claude]
+dependencies:
+  skills:
+    - url: https://github.com/blader/humanizer
+      dest: ""
+""",
+    )
+    with pytest.raises(ConfigError, match="'dest' must be a non-empty string"):
+        load_config(cfg_path)
+
+
 def test_fetch_entry_path_list_expands_to_multiple_sources(tmp_path: Path) -> None:
     cfg_path = _write_config(
         tmp_path,

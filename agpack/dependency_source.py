@@ -33,6 +33,10 @@ class DependencySource:
     targets: tuple[str, ...] | None = None
     """If set, deploy only to targets whose name is in this list. ``None`` means every target that declares this
     resource type (pre-existing behavior)."""
+    dest: str | None = None
+    """If set, override the deployed item name (the leaf under a target's resource ``path``). E.g. ``dest: humanizer``
+    on a skill deploys to ``<resource path>/humanizer/`` instead of using the name derived from ``url``/``path``. Only
+    valid when the dependency resolves to a single item; expanding sources reject it."""
 
     @property
     def url(self) -> str:

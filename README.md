@@ -137,6 +137,29 @@ Leaving `target:` off (the default) means every target that declares the resourc
     - skills/productivity/handoff
 ```
 
+### Renaming the deployed item (`dest`)
+
+By default the deployed item's name (the leaf under a target's resource `path`) is derived from `path` (or the repo name). `dest` overrides it, so you can control the on-disk folder/file name:
+
+```yaml
+- url: https://github.com/blader/humanizer
+  path: SKILL.md
+  dest: humanizer            # -> .claude/skills/humanizer/SKILL.md instead of .claude/skills/SKILL.md/
+```
+
+`dest` is only valid when the entry resolves to a single item — an expanding source (a folder of many skills) rejects it, since one name can't cover several items.
+
+Because a `path:` list carries several sources under one entry, a single `dest:` field can't rename them individually. For that, use the inline `path: <repo-path>:<dest>` shorthand — each list entry gets its own destination:
+
+```yaml
+- url: https://github.com/owner/skills-repo
+  path:
+    - skills/code-review:review        # -> <resource path>/review/
+    - skills/productivity/handoff      # no rename, deploys as "handoff"
+```
+
+An explicit `dest:` field wins over the inline suffix if both are present.
+
 ### Directory expansion
 
 `path` can point at a single file, a single folder, or a parent directory containing multiple items. agpack figures out what's inside:
