@@ -124,10 +124,27 @@ def _parse_fetch_entry(raw: dict[str, Any], context: str) -> DependencySource:
     if ref is not None:
         ref = str(ref)
 
-    target_scope = _parse_target_scope(raw, context)
-    _reject_unknown({"url", "path", "ref", "target"}, raw, context)
+    dest = raw.get("dest")
+    if dest is not None and (not isinstance(dest, str) or not dest):
+        msg = f"{context}: 'dest' must be a non-empty string"
+        raise ConfigError(msg)
 
-    return DependencySource(urls=urls, path=path, ref=ref, targets=target_scope)
+    # Inline ``path: <repo-path>:<dest>`` shorthand. A ``path:`` list can hold many sources, so a single ``dest:``
+    # field can't rename them individually — the colon form lets each entry carry its own destination. An explicit
+    # ``dest:`` field, if present, wins over the inline suffix.
+    if path is not None and ":" in path:
+        repo_path, _, inline_dest = path.rpartition(":")
+        if not repo_path or not inline_dest:
+            msg = f"{context}: 'path' shorthand must be '<path>:<dest>' with both sides non-empty, got {path!r}"
+            raise ConfigError(msg)
+        path = repo_path
+        if dest is None:
+            dest = inline_dest
+
+    target_scope = _parse_target_scope(raw, context)
+    _reject_unknown({"url", "path", "ref", "target", "dest"}, raw, context)
+
+    return DependencySource(urls=urls, path=path, ref=ref, targets=target_scope, dest=dest)
 
 
 _VALID_STRATEGIES = ("replace", "append")

@@ -160,6 +160,17 @@ def _sync_resource_type(  # noqa: C901  # orchestrator: fetch + deploy + lockfil
 
         is_expanded = len(items) > 1
 
+        # `dest` renames a single deployed item; it's ambiguous across an expanding source.
+        if dep.dest and is_expanded:
+            progress.update(tid, completed=2, icon="[red]✗[/red]", detail="'dest' with multiple items")
+            cleanup_fetch(result)
+            write_lockfile(project_root, new_lockfile)
+            msg = (
+                f"Error deploying {resource_type} '{dep.name}': 'dest' is only valid when the dependency "
+                f"resolves to a single item, but this one expanded to {len(items)}."
+            )
+            raise click.ClickException(msg)
+
         # Add sub-rows for expanded dependencies
         sub_task_ids: list[TaskID] = []
         if is_expanded:
@@ -184,6 +195,7 @@ def _sync_resource_type(  # noqa: C901  # orchestrator: fetch + deploy + lockfil
                     resource_type,
                     dep_targets,
                     project_root,
+                    dep.dest,
                 )
             except Exception as exc:
                 if is_expanded:

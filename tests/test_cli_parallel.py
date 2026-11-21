@@ -55,9 +55,10 @@ def _fake_deploy_item(
     _resource_type: str,
     _targets: list[TargetDef],
     _project_root: Path,
+    dest: str | None = None,
 ) -> list[str]:
     """Stand-in for ``agpack.deployer.deploy_item``."""
-    return [f"{name}.md"]
+    return [f"{dest or name}.md"]
 
 
 class TestParallelFetchAllSucceed:
